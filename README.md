@@ -24,7 +24,7 @@ dashboard with a farm plan for each one. Built for the make.fun bounty
 | `vendor/makefun-board.ts` | make.fun's dossier library, byte for byte as shipped in the kit. |
 | `dashboard/` | The static page: `index.html`, `app.css`, `app.js`. No framework, no network. |
 | `screenshots/` | The three dossier screenshots (board, detail, filtered), 1440×900 JPEG. |
-| `input/snapshot.json` | The sealed snapshot this entry was built against (DefiLlama, fetched 2026-11-14T01:18:33Z; 758 protocols, watchlist floor $50M). Read-only. |
+| `input/` | The sealed snapshot's home. The snapshot itself (DefiLlama, fetched 2026-11-14T01:18:33Z; 758 protocols, watchlist floor $50M) is **not committed** to this repo: the grader mounts it at `/input/snapshot.json`. For local runs, copy the sealed `snapshot.json` from the kit's `input/` here, or pass `--input <path>`. |
 | `scripts/check.py` | Local replica of the gate's seven rows, plus data-consistency checks. |
 | `scripts/shots.sh` | Renders the three screenshots with a headless Chrome. |
 | `scripts/rebuild-dossier.mts` | Rebuilds `dossier.json` from `out/` and compares bytes. |
@@ -32,6 +32,8 @@ dashboard with a farm plan for each one. Built for the make.fun bounty
 | `out/` | Generated output (git-ignored): `board.json`, `data.js`, `dashboard/`, `screenshots/`, `dossier.json`. |
 
 ## How to run
+
+Local runs need the sealed snapshot at `input/snapshot.json` — it is not committed to this repo (the grader mounts it at `/input/snapshot.json`); copy it from the kit's `input/` first, or pass `--input <path-to-snapshot>` (or `./run.sh [out-dir] [snapshot]`).
 
 ```bash
 ./run.sh            # full rebuild into out/ + gate checks
