@@ -126,6 +126,37 @@ wrapped = [r["slug"] for r in rows if (r["category"] in ("Bridge", "Canonical Br
            or re.search(r"\s(V\d+(\.\d+)?|v\d+(\.\d+)?|\d+\.\d+)$", r["name"])]
 check("no wrapped/staked/versioned rows", not wrapped, f"flagged={wrapped[:5]}")
 
+# --- radar-3 model: the fitted curve beats its baselines out-of-sample, the rank
+# ranges are non-degenerate, the verdicts discriminate, and the page's recompute
+# of every row matches board.json (the same arithmetic as dashboard/app.js). ---
+fit = radar["fit"]
+import math as _math
+check("model_beats_baselines", fit["loo_med_abs"] < fit["loo_category_med_abs"] and fit["loo_med_abs"] < fit["loo_global_med_abs"],
+      f"LOO curve {fit['loo_med_abs']} vs category {fit['loo_category_med_abs']} vs flat {fit['loo_global_med_abs']}")
+widths = [r["model"]["rank_hi"] - r["model"]["rank_lo"] for r in rows]
+widths_sorted = sorted(widths)
+med_width = widths_sorted[len(widths_sorted) // 2]
+bad_range = [r["slug"] for r in rows if not (r["model"]["rank_lo"] <= r["rank"] <= r["model"]["rank_hi"])]
+check("rank_ranges", not bad_range and med_width > 0,
+      f"median width {med_width}, max {widths_sorted[-1]}, violations={bad_range[:5]}")
+verdicts = {}
+for r in rows:
+    verdicts[r["farm"]["verdict"]] = verdicts.get(r["farm"]["verdict"], 0) + 1
+check("verdicts_discriminate", verdicts.get("FARM", 0) > 0 and verdicts.get("THIN", 0) > 0 and verdicts.get("SKIP", 0) > 0,
+      f"verdicts={verdicts}")
+bad_recompute = []
+for r in rows:
+    chains_feat = min(max(len(r["chains"]) - 1, 0), 3) / 3
+    ratio = min(fit["ratio_cap"], max(fit["ratio_floor"], _math.exp(
+        fit["intercept"] + fit["slope"] * (_math.log(max(1, r["tvl_usd"])) - fit["log_tvl_center"]) + fit["chain_coef"] * chains_feat)))
+    if max(1, round(r["tvl_usd"] * ratio)) != r["implied_value_usd"]:
+        bad_recompute.append(r["slug"])
+check("page_recompute_matches_board", not bad_recompute, f"mismatches={bad_recompute[:5]}")
+model_js = os.path.join(out, "dashboard", "model.js")
+check("model.js in dossier", os.path.isfile(model_js) and "MODEL_FIT" in open(model_js).read()
+      and "model.js" in d.get("text", ""),
+      f"{os.path.getsize(model_js) if os.path.isfile(model_js) else -1} bytes")
+
 print()
 print("RESULT:", "ALL PASS" if not fails else f"FAILURES: {fails}")
 sys.exit(0 if not fails else 1)

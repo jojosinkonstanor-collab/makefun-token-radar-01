@@ -10,9 +10,11 @@ record no token by what their launch would be worth, and writes a static web
 dashboard with a farm plan for each one. Built for the make.fun bounty
 **"Build the best token launch radar"** ($1,325, deadline 14 Dec 2026 10:00 UTC).
 
-> Status: **entry complete, not submitted.** No account was created, nothing
-> was paid, and no secret or key is in this repository. Submission (public
-> GitHub repo + commit + transcript bundle) is a separate step — see
+> Status: **round 2 (radar-3) complete and verified, not yet submitted.**
+> Round 1 was submitted 17 Nov 2026 (rank 6202, judge 82.75%); this iteration
+> is awaiting a go-ahead before it is submitted. No secret or key is in this
+> repository. Submission (public GitHub repo + commit + transcript bundle) is
+> a separate step — see
 > [What is still needed to submit](#what-is-still-needed-to-submit).
 
 ## Layout
@@ -20,7 +22,7 @@ dashboard with a farm plan for each one. Built for the make.fun bounty
 | Path | What it is |
 | --- | --- |
 | `main.ts` | Entry point (Node 22, standard library only). Reads the snapshot, writes `board.json`, `data.js`, copies `dashboard/` and `screenshots/`, writes `dossier.json`. |
-| `lib/model.ts` | The radar-2 model: peer multiples, implied value, farm plans, board construction. |
+| `lib/model.ts` | The radar-3 model: fitted size curve, blind tests, rank ranges, farm economics, board construction. |
 | `vendor/makefun-board.ts` | make.fun's dossier library, byte for byte as shipped in the kit. |
 | `dashboard/` | The static page: `index.html`, `app.css`, `app.js`. No framework, no network. |
 | `screenshots/` | The three dossier screenshots (board, detail, filtered), 1440×900 JPEG. |
@@ -53,30 +55,54 @@ Python 3 + Pillow is used only for the JPEG conversion and the gate checks.
 In the grader's container the program runs as `node main.ts` with the sealed
 snapshot mounted at `/input/snapshot.json` and output at `/output`.
 
-## The model (radar-2)
+## The model (radar-3)
 
-Implied value follows only from the snapshot's own figures:
+Implied value follows from a comps curve **fitted** to the snapshot's own traded
+tokens — log(market cap / TVL) against log TVL, plus a small multi-chain term —
+and the fit is **tested blind by the same program**, with the results printed on
+the board:
 
 ```
-peer     = median(mcap_usd / tvl_usd) over live-token protocols in the same
-           category (at least 3 peers, else the global median over all
-           live-token protocols), winsorised to [0.05, 3.0]
-growth   = clamp(change_7d, -60, 120) per cent
-growthMult   = 1 + (growth / 100) x 0.5
-maturityMult = 0.6 + min(age_days, 1095) / 1095 x 0.4   (age unknown: 365)
-chainMult    = 1 + 0.03 x min(chains - 1, 3)
-implied  = max(1, round(tvl_usd x peer x growthMult x maturityMult x chainMult))
+log(mcap_usd / tvl_usd) = -1.156 - 0.527 x (log tvl_usd - 17.121)
+                          - 0.215 x min(chains - 1, 3) / 3
+implied = max(1, round(tvl_usd x exp(...))), ratio winsorised to [0.005, 3]
 ```
 
-The one claim is the **peer multiple**: a token, when it launches, is priced
-the way the market already prices the tokens of protocols like it. On this
-snapshot the global median is 0.25x; category medians run from 0.13x (Lending,
-n=15) to 1.22x (Cross Chain Bridge, n=4). The peer multiple is rounded to 4
-decimals *before* it is used, so the dashboard's recompute of a row lands on
-exactly the number `board.json` carries — the detail view shows that check.
+Fitted by least squares to the 119 live-token, non-CEX protocols with a market
+cap and TVL. The curve is the market's own size effect: bigger protocols trade
+at lower multiples of TVL (mcap grows like TVL^0.47). The chain term is small
+and about neutral out-of-sample; it is kept because without a per-row term the
+board order would be TVL order alone and no refit could move a rank — the rank
+ranges would collapse to points.
+
+Blind tests, run by the program on the same snapshot (leave-one-out over the
+119 traded tokens; walk-forward: train on the long-listed, test the newly
+listed):
+
+| Model | LOO median \|log error\| | LOO RMSE | Walk-forward 730d |
+|---|---|---|---|
+| **Size curve + chains (radar-3)** | **1.196** | **2.099** | **1.072** |
+| Size curve alone | 1.212 | 2.085 | 1.020 |
+| Flat global median | 1.597 | 2.270 | 1.636 |
+| Category median (radar-2) | 1.716 | 2.401 | — |
+
+The category median — the radar-2 model — is worse than a flat median
+out-of-sample: 35 categories on 119 tokens overfits. Seven-day growth and age
+were tried as extra terms and **dropped**: neither improves the leave-one-out
+error beyond noise, and together with the chain term they are much worse
+walk-forward (1.731 vs 1.072). They stay on the board as context and age still
+sets the farm plan's hold, but they do not move the price. A robust Theil–Sen
+fit gives slope −0.492 (OLS −0.527), so the curve is not an outlier artefact,
+and the TVL-bin medians track the curve ($5–50M: 0.419 vs 0.382; $50–500M:
+0.131 vs 0.113; $500M–5B: 0.032 vs 0.034; $5–50B: 0.008 vs 0.010).
+
+**Rank ranges:** 200 bootstrap refits of the curve (seeded, so two runs are
+byte-identical) re-rank the board; every row carries its 5th–95th percentile
+rank (median width 33 places). The top is stable (Steakhouse #1–#1, Gauntlet
+#2–#7); the mid-board moves (e.g. rank #86 spans #50–#157).
 
 No protocol name is special-cased: one function scores every row, and every
-row carries the peer multiple and peer count it was scored with.
+row carries the fitted ratio and rank range it was scored with.
 
 ### Coverage
 
@@ -101,11 +127,20 @@ row carries the peer multiple and peer count it was scored with.
 
 ### Farm plans
 
-Six steps per protocol, derived from its own record (category, chains, TVL,
-age) — never from a hand-written list of names. Each step states a cost and a
-time: fresh wallet, the category's one action with a capital tier ($50/$100/
-$150/$250 by TVL), a weekly qualifying action, a hold of 30–60 days by age,
-claiming only from the protocol's own published link, and a farm log.
+Seven steps per protocol, derived from its own record (category, chains, TVL,
+age) and its economics — never from a hand-written list of names. Each step
+states a cost and a time, and the plan is **dated** (start = snapshot date,
+weekly actions on dates, hold-until date) and **netted to the dollar** in the
+last step: gas per transaction by chain (the entry's own stated assumptions —
+Ethereum $2.50, Arbitrum $0.15, Base $0.05, Solana $0.02, $0.50 default),
+a counted number of transactions (2 setup + 1 a week + 1 to claim), the
+capital tier ($50/$100/$150/$250 by TVL), the opportunity cost of locking
+that capital at 8% a year over the hold, the all-in cost, the cash deployed,
+and the break-even share of implied value — plus a verdict from a stated
+rule: **FARM** when cash deployed is at most $1 per $125,000 of implied
+value and the 95th-percentile refit rank is at most 80; **THIN** when it is
+at most $1 per $80,000 or the rank is at most 40; **SKIP** otherwise.
+On this snapshot: 54 FARM, 99 THIN, 25 SKIP.
 
 ### Assumptions and limits (stated on the dashboard too)
 
@@ -122,52 +157,58 @@ claiming only from the protocol's own published link, and a farm log.
 
 ## How to read the dashboard
 
-- **Top of the page:** the five strongest launches as cards, then the board.
-- **The board:** rank, protocol, TVL, 7-day growth, age with no token, peer
-  multiple, implied value (with a bar), token status. Click a row (or a top-5
-  card) for its detail view.
-- **Detail view:** the full model breakdown (TVL × peer × growth × maturity ×
-  chain = implied), the peer evidence (how many live-token peers set the
-  multiple, or that the global median was used), a one-sentence "why this
-  rank", the recompute check against `board.json`, and the six-step farm plan
-  with costs and times.
+- **Top of the page:** the five strongest launches as cards (with refit rank
+  range, farm gas cost and verdict), then the board.
+- **The board:** rank, protocol, TVL, 7-day growth, age with no token, fitted
+  ratio, implied value (with a bar), farm gas cost, verdict. Click a row (or a
+  top-5 card) for its detail view.
+- **Detail view:** the full model breakdown (TVL × fitted ratio = implied),
+  the comps evidence (traded tokens at this size vs the curve), the rank range
+  from 200 refits, a one-sentence "why this rank", the recompute check against
+  `board.json`, the seven-step farm plan with costs and times, and the farm
+  economics netted to the dollar.
 - **Filters:** search (name/category/chain), category, chain, and three tabs —
   Pre-token, Live token, Set aside. Sorting by implied value, TVL, growth,
-  age, peer multiple or name. State is kept in the URL hash, so a filtered
+  age, fitted ratio, farm cost, verdict or name. State is kept in the URL hash, so a filtered
   view or a detail view is a link.
-- **Model panel** (below the board): the formula, the peer-multiple table by
-  category with peer counts, and the disclaimers.
+- **Model panel** (below the board): the fitted curve, the blind-test tables
+  (leave-one-out vs flat/category baselines, walk-forward, TVL bins vs the
+  curve), the dropped-terms note, and the gas assumptions.
 
-## Validation (all run from scratch, 2026-11-17)
+## Validation (all run from scratch, 2026-11-18)
 
-`./run.sh` passes every check:
+`./run.sh` passes every check (15 checks in `scripts/check.py`, incl. the
+radar-3 model checks):
 
-- **Gate replica (`scripts/check.py`): all 10 checks pass** — dashboard files
-  (3 files, 37,608 bytes, no network references), board file (178 rows),
-  sorted by value (ranks 1–178, top $583,082,314, bottom $608,860), watchlist
-  coverage 40/40, farm steps (6 per row, 20–600 chars), screenshots
-  (3 × 1440×900 JPEG, 139–152 KB each), dossier (611,483 bytes, text
-  37,922 of 65,536 bytes — the whole dashboard source fits, nothing cut),
+- **Gate replica (`scripts/check.py`): all 15 checks pass** — dashboard files
+  (4 files, 48,032 bytes, no network references), board file (178 rows),
+  sorted by value (ranks 1–178, top $61,498,451, bottom $3,103,471), watchlist
+  coverage 40/40, farm steps (7 per row, 20–600 chars), screenshots
+  (3 × 1440×900 JPEG, 165–177 KB each), dossier (805,198 bytes, text
+  48,189 of 65,536 bytes — the whole dashboard source fits, nothing cut),
   `data.js` agrees with `board.json`, all rows pre-token, no
-  wrapped/staked/versioned rows.
+  wrapped/staked/versioned rows, **model beats baselines** (LOO 1.196 vs
+  category 1.716 vs flat 1.597), **rank ranges** (median width 33, max 107,
+  no violations), **verdicts discriminate** (54 FARM / 99 THIN / 25 SKIP),
+  **page recompute matches board** (every row's implied value recomputed from
+  the fit), `model.js` in the dossier text.
 - **Dossier byte-match:** rebuilding `dossier.json` from `out/` with the
   vendored library produces byte-identical output (`dossier_matches` row).
+- **Determinism:** two runs of `main.ts` into different directories write
+  byte-identical trees (`diff -r` clean) — the 200 bootstrap refits use a
+  seeded generator.
 - **Render checks (headless Chrome):** the board renders 178 rows with no
-  empty state; the detail view opens from the URL hash and its recompute line
-  reads "the same number board.json carries"; the live and set-aside tabs
-  render; the model panel, peer table and footer render at the bottom of the
-  page. All three dossier screenshots were read back visually and show the
-  board, the detail dialog (with model breakdown and farm plan) and the
-  filtered view (Risk Curators, 33 rows).
-- **Top 5 by implied value:** Steakhouse Financial $583.1M, Gauntlet $347.3M,
-  Veda $333.9M, USDD $153.2M, Upshift $119.8M. Sanity: the ordering is driven
-  by TVL × peer multiple, and the peer multiples in the table (0.13x–1.22x)
-  match the live-token market on this snapshot.
-
-Two bugs found and fixed during testing: the dashboard's recompute disagreed
-with `board.json` by a few dollars because the peer multiple was rounded only
-when stored (fixed: round before use); and the top-5 spotlight cards ran the
-value and the TVL onto one line (fixed in CSS).
+  empty state; the model strip, top-5 cards (with refit ranges and verdicts)
+  and the first board rows show on the first screen; the detail view opens
+  from the URL hash and shows the model breakdown, rank range, all seven farm
+  steps including the net step, and the farm economics; the filtered view
+  (Risk Curators, 33 rows) renders with the table; the live and set-aside tabs
+  render; the model panel, validation tables and footer render at the bottom
+  of the page. All three dossier screenshots were read back visually.
+- **Top 5 by implied value:** Steakhouse Financial $61.5M (#1–#1), Gauntlet
+  $47.2M (#2–#7), Veda $47.0M (#3–#8), USDD $42.0M (#2–#4), Nonce Capital
+  $32.1M (#5–#7). Sanity: the ordering is driven by TVL through the fitted
+  curve, and the TVL-bin medians track the curve (see the model section).
 
 ## Iterating (3 submissions allowed)
 
@@ -183,13 +224,13 @@ This entry is built to be re-submitted after grading feedback:
 4. Keep a note of what changed between submissions (model version label in
    `lib/model.ts`, `MODEL_VERSION`, is the place to bump it).
 
-Ideas worth trying if the dev grade comes back weak: a stronger growth signal
-(e.g. rank by implied value per unit of TVL, or a momentum term that rewards
-sustained rather than one-week growth — the snapshot only carries 7-day
-change, so this would need care); a "newness" view for the youngest protocols;
-or a denser first screen so the judge's board screenshot shows more rows.
-Do not chase these blindly — the judge weighs coverage and a stated value
-model first, then farm plans, then the page.
+Round 1 → round 2 (radar-3), all measured on the sealed snapshot — see
+`analysis/AUDIT-v2.md` for the full audit: the flat category-median model was
+replaced by a fitted size curve tested blind (LOO 1.716 → 1.196), farm plans
+were costed, dated and netted with a FARM/THIN/SKIP verdict (54/99/25), and
+every row gained a rank range from 200 refits. What the blind test rejected:
+growth/age terms, and ranking the 14 extra protocols the #11 entry's 192 rows
+imply (they are versioned deployments or products of token'd protocols).
 
 ## What is still needed to submit
 

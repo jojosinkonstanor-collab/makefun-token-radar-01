@@ -5,7 +5,7 @@
 set -euo pipefail
 OUT="${1:-out}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CH="${CHROME:-/tmp/shot/chrome-headless-shell/linux-157.0.8103.78/chrome-headless-shell-linux64/chrome-headless-shell}"
+CH="${CHROME:-$HOME/workspace/.shot/chrome-headless-shell-linux64/chrome-headless-shell}"
 PAGE="file://$ROOT/$OUT/dashboard/index.html"
 TMP="$(mktemp -d)"
 
